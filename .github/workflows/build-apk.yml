@@ -1,5 +1,4 @@
-
-name: Build Face Swap AI APK
+name: Build FaceFusion Mobile APK
 
 on:
   workflow_dispatch:
@@ -30,37 +29,56 @@ jobs:
       - name: Install Android SDK packages
         run: |
           yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
-
           sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;34.0.0"
 
-      - name: Download native libraries
+      - name: Download matching upstream native libraries
+        env:
+          UPSTREAM_TAG: v0.9.41
         run: |
-          mkdir -p "$RUNNER_TEMP/native-libs"
+          python3 - <<'PY'
+          import json, os, urllib.request
+          tag = os.environ["UPSTREAM_TAG"]
+          api = f"https://api.github.com/repos/AbrahamPaulJ/facefusion-mobile/releases/tags/{tag}"
+          req = urllib.request.Request(api, headers={"Accept": "application/vnd.github+json", "User-Agent": "FaceFusion-APK-builder"})
+          with urllib.request.urlopen(req, timeout=60) as response:
+              release = json.load(response)
+          assets = [a for a in release.get("assets", []) if a["name"].endswith("-release.apk")]
+          if len(assets) != 1:
+              raise SystemExit(f"Expected one release APK for {tag}; found {[a['name'] for a in assets]}")
+          asset = assets[0]
+          print(f"Downloading {asset['name']} ({asset['size']} bytes)")
+          req = urllib.request.Request(asset["browser_download_url"], headers={"User-Agent": "FaceFusion-APK-builder"})
+          with urllib.request.urlopen(req, timeout=180) as response, open("upstream.apk", "wb") as out:
+              out.write(response.read())
+          PY
 
-          curl -fL --retry 3 \
-            "https://github.com/AbrahamPaulJ/facefusion-mobile/releases/download/v0.9.0/facefusion-mobile-0.9.0-release.apk" \
-            -o "$RUNNER_TEMP/upstream.apk"
+          mkdir -p "$RUNNER_TEMP/extracted" "$RUNNER_TEMP/native-libs/arm64-v8a"
+          unzip -q upstream.apk 'lib/arm64-v8a/*' -d "$RUNNER_TEMP/extracted"
+          cp "$RUNNER_TEMP/extracted/lib/arm64-v8a/"*.so "$RUNNER_TEMP/native-libs/arm64-v8a/"
 
-          unzip -o "$RUNNER_TEMP/upstream.apk" \
-            'lib/arm64-v8a/*' \
-            -d "$RUNNER_TEMP/extracted"
-
-          mkdir -p "$RUNNER_TEMP/native-libs/arm64-v8a"
-
-          cp "$RUNNER_TEMP/extracted/lib/arm64-v8a/"* \
-            "$RUNNER_TEMP/native-libs/arm64-v8a/"
-
-          echo "Native libraries:"
-          ls -lh "$RUNNER_TEMP/native-libs/arm64-v8a/"
+      - name: Verify JNI compatibility with this source tree
+        run: |
+          python3 - "$RUNNER_TEMP/native-libs/arm64-v8a/libffnative.so" <<'PY'
+          import pathlib, re, subprocess, sys
+          root = pathlib.Path("work/android/app/src/main")
+          kt = (root / "java/com/facefusion/mobile/NativePipe.kt").read_text()
+          methods = sorted(set(re.findall(r"external fun\s+(\w+)\s*\(", kt)))
+          symbols = subprocess.check_output(["readelf", "-Ws", sys.argv[1]], text=True)
+          missing = [m for m in methods if f"Java_com_facefusion_mobile_NativePipe_{m}" not in symbols]
+          print(f"Kotlin native methods: {len(methods)}")
+          if missing:
+              print("Missing JNI methods:", ", ".join(missing))
+              raise SystemExit(1)
+          print("JNI check passed: every Kotlin external method exists in libffnative.so")
+          PY
 
       - name: Build Debug APK
         working-directory: work/android
         run: |
           chmod +x gradlew
-
           ./gradlew :app:assembleDebug \
             -x :app:qnnStage \
             -PprebuiltNativeDir="$RUNNER_TEMP/native-libs" \
@@ -69,9 +87,8 @@ jobs:
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
-        if: success()
         with:
-          name: Face-Swap-AI-APK
+          name: FaceFusion-Mobile-Samsung-A73-Debug-APK
           path: work/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
