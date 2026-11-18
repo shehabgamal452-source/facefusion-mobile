@@ -29,15 +29,18 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager \
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
+            "platform-tools" \
             "platforms;android-35" \
             "build-tools;34.0.0"
 
       - name: Download native libraries
         run: |
           mkdir -p "$RUNNER_TEMP/native-libs"
-          curl -fL \
+
+          curl -fL --retry 3 \
             "https://github.com/AbrahamPaulJ/facefusion-mobile/releases/download/v0.9.0/facefusion-mobile-0.9.0-release.apk" \
             -o "$RUNNER_TEMP/upstream.apk"
 
@@ -50,15 +53,23 @@ jobs:
           cp "$RUNNER_TEMP/extracted/lib/arm64-v8a/"* \
             "$RUNNER_TEMP/native-libs/arm64-v8a/"
 
+          echo "Native libraries:"
+          ls -lh "$RUNNER_TEMP/native-libs/arm64-v8a/"
+
       - name: Build Debug APK
         working-directory: work/android
         run: |
           chmod +x gradlew
+
           ./gradlew :app:assembleDebug \
-            -PprebuiltNativeDir="$RUNNER_TEMP/native-libs"
+            -x :app:qnnStage \
+            -PprebuiltNativeDir="$RUNNER_TEMP/native-libs" \
+            --no-daemon \
+            --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: Face-Swap-AI-APK
           path: work/android/app/build/outputs/apk/debug/*.apk
