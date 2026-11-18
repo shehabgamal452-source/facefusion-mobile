@@ -25,11 +25,14 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platforms;android-35" "build-tools;34.0.0"
+          yes | sdkmanager --licenses
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;34.0.0"
 
       - name: Download native libraries
         run: |
@@ -37,10 +40,13 @@ jobs:
           curl -fL \
             "https://github.com/AbrahamPaulJ/facefusion-mobile/releases/download/v0.9.0/facefusion-mobile-0.9.0-release.apk" \
             -o "$RUNNER_TEMP/upstream.apk"
+
           unzip -o "$RUNNER_TEMP/upstream.apk" \
             'lib/arm64-v8a/*' \
             -d "$RUNNER_TEMP/extracted"
+
           mkdir -p "$RUNNER_TEMP/native-libs/arm64-v8a"
+
           cp "$RUNNER_TEMP/extracted/lib/arm64-v8a/"* \
             "$RUNNER_TEMP/native-libs/arm64-v8a/"
 
@@ -57,3 +63,4 @@ jobs:
           name: Face-Swap-AI-APK
           path: work/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 7
